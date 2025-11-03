@@ -63,7 +63,7 @@ func (g *GUI) loginWindow() {
 	passEntry.OnSubmitted = func(s string) {
 		login()
 	}
-	passEntry.SetText("pass1234") // set password
+	// passEntry.SetText("password1234!") // set password
 	loginButton := widget.NewButton("Login", login)
 	content := container.NewVBox(
 		widget.NewLabel("Please log in"),
@@ -135,7 +135,6 @@ func (g *GUI) chatWindow(contact *Contact) *fyne.Container {
 }
 
 func (g *GUI) appendText(prefix, content any, id string) {
-	fmt.Printf("appendText(%s, %s, %s)\n", prefix, content, id)
 	go func() {
 		fyne.DoAndWait(func() {
 			g.chatOutput[id].AppendMarkdown(fmt.Sprintf("%v: %v", prefix, content))
@@ -188,7 +187,6 @@ func main() {
 				log.Printf("error unmarshalling message: %v", err)
 			}
 			decryptedMessage, err := g.enc.privateDecrypt(nms.Message)
-			fmt.Printf("received message: %v, %v\n", string(decryptedMessage), string(nms.FromID))
 			if err != nil {
 				log.Printf("error decrypting message: %v", err)
 			}
