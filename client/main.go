@@ -6,9 +6,9 @@ import (
 	"log"
 	"os"
 	"time"
-
+	
 	_ "embed"
-
+	
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
@@ -17,8 +17,7 @@ import (
 )
 
 var (
-	background         = false
-	currentContactName string
+	background = false
 	//go:embed config.json
 	config          []byte
 	contactMessages map[string][]QueueMessage
@@ -38,7 +37,7 @@ type Config struct {
 type GUI struct {
 	app             fyne.App
 	window          fyne.Window
-	chatOutput      *widget.RichText
+	chatOutput      map[string]*widget.RichText
 	scrollContainer *container.Scroll
 	client          *Client
 	enc             *Encryption
@@ -64,7 +63,7 @@ func (g *GUI) loginWindow() {
 	passEntry.OnSubmitted = func(s string) {
 		login()
 	}
-	// passEntry.SetText("password1234!") // set password
+	passEntry.SetText("pass1234") // set password
 	loginButton := widget.NewButton("Login", login)
 	content := container.NewVBox(
 		widget.NewLabel("Please log in"),
@@ -77,58 +76,47 @@ func (g *GUI) loginWindow() {
 
 func (g *GUI) contactsWindow() {
 	g.window.SetTitle("Contacts")
-	content := container.NewVBox(widget.NewLabel("Contacts"))
+	tabs := container.NewAppTabs()
 	for _, contact := range g.enc.keys.Contacts {
-		content.Add(widget.NewButton(contact.Username, func() {
-			currentContactName = contact.Username
-			g.client.targetID = contact.ID
-			g.enc.targetPublicKey = contact.PublicKey
-			g.chatWindow()
-		}))
-		content.Add(widget.NewSeparator())
+		tabs.Append(container.NewTabItem(contact.Username, g.chatWindow(contact)))
 	}
-	g.window.SetContent(content)
+	g.window.SetContent(tabs)
 }
 
-func (g *GUI) chatWindow() {
+func (g *GUI) chatWindow(contact *Contact) *fyne.Container {
 	g.window.SetTitle("messaging")
-	g.chatOutput = widget.NewRichText()
-	g.chatOutput.Wrapping = fyne.TextWrapWord
-	g.scrollContainer = container.NewVScroll(g.chatOutput)
+	g.chatOutput[contact.ID] = widget.NewRichText()
+	g.chatOutput[contact.ID].Wrapping = fyne.TextWrapWord
+	g.scrollContainer = container.NewVScroll(g.chatOutput[contact.ID])
 	msgEntry := widget.NewEntry()
 	msgEntry.OnSubmitted = func(s string) {
 		if len(s) > 0 {
-			targetPublicKeyEncryptedBytes, err := g.enc.publicEncrypt([]byte(msgEntry.Text))
+			targetPublicKeyEncryptedBytes, err := g.enc.publicEncrypt([]byte(msgEntry.Text), contact.PublicKey)
 			if err != nil {
 				log.Println(err)
 				return
 			}
 			// TODO : resend if fail
 			if err := g.client.SendMsg(&Msg{
-				ID:        g.client.targetID,
+				ID:        contact.ID,
 				TimeStamp: time.Now(),
 				Message:   targetPublicKeyEncryptedBytes,
 				FromID:    g.client.ID,
 			}); err != nil {
 				log.Println(err)
-				g.appendText("Error:", err.Error())
+				g.appendText("Error:", err.Error(), contact.ID)
 				if err := g.client.Connect(); err != nil {
-					g.appendText("Error:", "Failed to reconnect to server")
-					g.appendText("Error:", err.Error())
+					g.appendText("Error:", "Failed to reconnect to server", contact.ID)
+					g.appendText("Error:", err.Error(), contact.ID)
 					time.Sleep(5 * time.Second)
 					os.Exit(1)
 				}
 			}
-			g.appendText(g.enc.keys.Username, msgEntry.Text)
+			g.appendText(g.enc.keys.Username, msgEntry.Text, contact.ID)
 			msgEntry.SetText("")
 		}
 	}
-	backButton := widget.NewButton("back", func() {
-		g.client.targetID = ""
-		g.contactsWindow()
-	})
-	content := container.New(layout.NewBorderLayout(backButton, msgEntry, nil, nil),
-		backButton,
+	content := container.New(layout.NewBorderLayout(nil, msgEntry, nil, nil),
 		g.scrollContainer,
 		msgEntry,
 	)
@@ -136,23 +124,23 @@ func (g *GUI) chatWindow() {
 		for i := 0; i < len(val); i++ {
 			since := time.Now().Sub(val[i].sent).Round(time.Second)
 			if since > time.Second*5 {
-				g.appendText(fmt.Sprintf("%s %v:", currentContactName, since), val[i].msg)
+				g.appendText(fmt.Sprintf("%s %v:", contact.Username, since), val[i].msg, contact.ID)
 			} else {
-				g.appendText(currentContactName, val[i].msg)
+				g.appendText(contact.Username, val[i].msg, contact.ID)
 			}
-
 		}
 		delete(contactMessages, g.client.targetID)
 	}
-	g.window.SetContent(content)
+	return content
 }
 
-func (g *GUI) appendText(prefix, content any) {
+func (g *GUI) appendText(prefix, content any, id string) {
+	fmt.Printf("appendText(%s, %s, %s)\n", prefix, content, id)
 	go func() {
 		fyne.DoAndWait(func() {
-			g.chatOutput.AppendMarkdown(fmt.Sprintf("%v: %v", prefix, content))
-			g.chatOutput.AppendMarkdown("---")
-			g.chatOutput.Refresh()
+			g.chatOutput[id].AppendMarkdown(fmt.Sprintf("%v: %v", prefix, content))
+			g.chatOutput[id].AppendMarkdown("---")
+			g.chatOutput[id].Refresh()
 			g.scrollContainer.ScrollToBottom()
 		})
 	}()
@@ -176,6 +164,7 @@ func main() {
 		log.Fatalf("Error parsing config file: %v\n", err)
 	}
 	g := &GUI{
+		chatOutput: make(map[string]*widget.RichText),
 		enc: &Encryption{
 			iter:           100000,
 			configKeystore: []byte(c.KeyStore),
@@ -199,21 +188,19 @@ func main() {
 				log.Printf("error unmarshalling message: %v", err)
 			}
 			decryptedMessage, err := g.enc.privateDecrypt(nms.Message)
+			fmt.Printf("received message: %v, %v\n", string(decryptedMessage), string(nms.FromID))
 			if err != nil {
 				log.Printf("error decrypting message: %v", err)
 			}
 			since := time.Now().Sub(nms.TimeStamp).Round(time.Second)
-			if nms.FromID != g.client.targetID {
-				contactMessages[nms.FromID] = append(contactMessages[nms.FromID], QueueMessage{
-					sent: nms.TimeStamp,
-					msg:  string(decryptedMessage),
-				})
+			contactMessages[nms.FromID] = append(contactMessages[nms.FromID], QueueMessage{
+				sent: nms.TimeStamp,
+				msg:  string(decryptedMessage),
+			})
+			if since > time.Second*5 {
+				g.appendText(fmt.Sprintf("%s %v:", "<-", since), string(decryptedMessage), nms.FromID)
 			} else {
-				if since > time.Second*5 {
-					g.appendText(fmt.Sprintf("%s %v:", currentContactName, since), string(decryptedMessage))
-				} else {
-					g.appendText(currentContactName, string(decryptedMessage))
-				}
+				g.appendText("<-", string(decryptedMessage), nms.FromID)
 			}
 			if background {
 				var rmun string

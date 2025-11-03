@@ -12,3 +12,9 @@ You can obtain the required Android NKD at [NDK](https://github.com/android/ndk/
 
 NDK release required:
 * r21e
+
+SDK path
+
+```shell
+$HOME/Android/android-ndk-r21e
+```

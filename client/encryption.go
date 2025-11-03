@@ -11,9 +11,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
-
+	
 	_ "embed"
-
+	
 	ecies "github.com/ecies/go/v2"
 )
 
@@ -46,11 +46,10 @@ type Contact struct {
 }
 
 type Encryption struct {
-	configKeystore  []byte
-	targetPublicKey *ecies.PublicKey
-	password        string
-	iter            int
-	keys            *Keys
+	configKeystore []byte
+	password string
+	iter     int
+	keys     *Keys
 }
 
 func (e *Encryption) passwordDecrypt(cipherText []byte) ([]byte, error) {
@@ -124,8 +123,8 @@ func (e *Encryption) loadKeys() error {
 	return nil
 }
 
-func (e *Encryption) publicEncrypt(plaintext []byte) ([]byte, error) {
-	ciphertext, err := ecies.Encrypt(e.targetPublicKey, plaintext)
+func (e *Encryption) publicEncrypt(plaintext []byte, publicKey *ecies.PublicKey) ([]byte, error) {
+	ciphertext, err := ecies.Encrypt(publicKey, plaintext)
 	if err != nil {
 		return nil, errors.New("error encrypting with public key" + err.Error())
 	}
