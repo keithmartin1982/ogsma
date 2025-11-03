@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -156,6 +157,16 @@ func (g *GUI) lifecycle() {
 	})
 }
 
+func (g *GUI) lookupUsername(id string) (string, error) {
+	for _, contact := range g.enc.keys.Contacts {
+		if id == contact.ID {
+			return contact.Username, nil
+			
+		}
+	}
+	return "", errors.New("user not found")
+}
+
 func main() {
 	contactMessages = make(map[string][]QueueMessage)
 	c := Config{}
@@ -195,21 +206,19 @@ func main() {
 				sent: nms.TimeStamp,
 				msg:  string(decryptedMessage),
 			})
+			username, err := g.lookupUsername(nms.FromID)
+			if err != nil {
+				log.Printf("error looking up username: %v", err)
+			}
 			if since > time.Second*5 {
-				g.appendText(fmt.Sprintf("%s %v:", "<-", since), string(decryptedMessage), nms.FromID)
+				g.appendText(fmt.Sprintf("%s %v:", username, since), string(decryptedMessage), nms.FromID)
 			} else {
-				g.appendText("<-", string(decryptedMessage), nms.FromID)
+				g.appendText(username, string(decryptedMessage), nms.FromID)
 			}
 			if background {
-				var rmun string
-				for _, contact := range g.enc.keys.Contacts {
-					if nms.FromID == contact.ID {
-						rmun = contact.Username
-						break
-					}
-				}
+				
 				fyne.CurrentApp().SendNotification(&fyne.Notification{
-					Title:   fmt.Sprintf("Msg from: %s", rmun),
+					Title:   fmt.Sprintf("Msg from: %s", username),
 					Content: fmt.Sprintf("%s", string(decryptedMessage)),
 				})
 			}
