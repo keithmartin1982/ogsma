@@ -38,7 +38,7 @@ type GUI struct {
 	app             fyne.App
 	window          fyne.Window
 	chatOutput      map[string]*widget.RichText
-	scrollContainer *container.Scroll
+	scrollContainer map[string]*container.Scroll
 	client          *Client
 	enc             *Encryption
 }
@@ -87,7 +87,7 @@ func (g *GUI) chatWindow(contact *Contact) *fyne.Container {
 	g.window.SetTitle("messaging")
 	g.chatOutput[contact.ID] = widget.NewRichText()
 	g.chatOutput[contact.ID].Wrapping = fyne.TextWrapWord
-	g.scrollContainer = container.NewVScroll(g.chatOutput[contact.ID])
+	g.scrollContainer[contact.ID] = container.NewVScroll(g.chatOutput[contact.ID])
 	msgEntry := widget.NewEntry()
 	msgEntry.OnSubmitted = func(s string) {
 		if len(s) > 0 {
@@ -119,7 +119,7 @@ func (g *GUI) chatWindow(contact *Contact) *fyne.Container {
 		}
 	}
 	return container.New(layout.NewBorderLayout(nil, msgEntry, nil, nil),
-		g.scrollContainer,
+		g.scrollContainer[contact.ID],
 		msgEntry,
 	)
 }
@@ -129,9 +129,8 @@ func (g *GUI) appendText(prefix, content any, id string) {
 		fyne.DoAndWait(func() {
 			g.chatOutput[id].AppendMarkdown(fmt.Sprintf("%v: %v", prefix, content))
 			g.chatOutput[id].AppendMarkdown("---")
-			g.scrollContainer.ScrollToBottom()
+			g.scrollContainer[id].ScrollToBottom()
 			g.chatOutput[id].Refresh()
-			
 		})
 	}()
 }
@@ -198,7 +197,8 @@ func main() {
 		log.Fatalf("Error parsing config file: %v\n", err)
 	}
 	g := &GUI{
-		chatOutput: make(map[string]*widget.RichText),
+		scrollContainer: make(map[string]*container.Scroll),
+		chatOutput:      make(map[string]*widget.RichText),
 		enc: &Encryption{
 			iter:           100000,
 			configKeystore: []byte(c.KeyStore),
