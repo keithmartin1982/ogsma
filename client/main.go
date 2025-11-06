@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"time"
 	
 	_ "embed"
@@ -97,42 +96,32 @@ func (g *GUI) chatWindow(contact *Contact) *fyne.Container {
 				log.Println(err)
 				return
 			}
-			// TODO : resend if fail
-			if err := g.client.SendMsg(&Msg{
-				ID:        contact.ID,
-				TimeStamp: time.Now(),
-				Message:   targetPublicKeyEncryptedBytes,
-				FromID:    g.client.ID,
-			}); err != nil {
-				log.Println(err)
-				g.appendText("Error:", err.Error(), contact.ID)
-				if err := g.client.Connect(); err != nil {
-					g.appendText("Error:", "Failed to reconnect to server", contact.ID)
-					g.appendText("Error:", err.Error(), contact.ID)
-					time.Sleep(5 * time.Second)
-					os.Exit(1)
+			retry := 0
+			for {
+				retry++
+				if err := g.client.SendMsg(&Msg{
+					ID:        contact.ID,
+					TimeStamp: time.Now(),
+					Message:   targetPublicKeyEncryptedBytes,
+					FromID:    g.client.ID,
+				}); err == nil {
+					break
 				}
+				if retry > 16 {
+					log.Printf("Failed to send message to %v: %v", contact.ID, err)
+					g.appendText("ERROR:", "failed to send message", contact.ID)
+					return
+				}
+				time.Sleep(250 * time.Millisecond)
 			}
 			g.appendText(g.enc.keys.Username, msgEntry.Text, contact.ID)
 			msgEntry.SetText("")
 		}
 	}
-	content := container.New(layout.NewBorderLayout(nil, msgEntry, nil, nil),
+	return container.New(layout.NewBorderLayout(nil, msgEntry, nil, nil),
 		g.scrollContainer,
 		msgEntry,
 	)
-	if val, ok := contactMessages[g.client.targetID]; ok {
-		for i := 0; i < len(val); i++ {
-			since := time.Now().Sub(val[i].sent).Round(time.Second)
-			if since > time.Second*5 {
-				g.appendText(fmt.Sprintf("%s %v:", contact.Username, since), val[i].msg, contact.ID)
-			} else {
-				g.appendText(contact.Username, val[i].msg, contact.ID)
-			}
-		}
-		delete(contactMessages, g.client.targetID)
-	}
-	return content
 }
 
 func (g *GUI) appendText(prefix, content any, id string) {
@@ -140,8 +129,9 @@ func (g *GUI) appendText(prefix, content any, id string) {
 		fyne.DoAndWait(func() {
 			g.chatOutput[id].AppendMarkdown(fmt.Sprintf("%v: %v", prefix, content))
 			g.chatOutput[id].AppendMarkdown("---")
-			g.chatOutput[id].Refresh()
 			g.scrollContainer.ScrollToBottom()
+			g.chatOutput[id].Refresh()
+			
 		})
 	}()
 }
@@ -167,6 +157,40 @@ func (g *GUI) lookupUsername(id string) (string, error) {
 	return "", errors.New("user not found")
 }
 
+func (g *GUI) listen() {
+	for {
+		nm := <-g.client.MessageChan
+		nms := Msg{}
+		if err := json.Unmarshal(nm, &nms); err != nil {
+			log.Printf("error unmarshalling message: %v", err)
+		}
+		decryptedMessage, err := g.enc.privateDecrypt(nms.Message)
+		if err != nil {
+			log.Printf("error decrypting message: %v", err)
+		}
+		since := time.Now().Sub(nms.TimeStamp).Round(time.Second)
+		contactMessages[nms.FromID] = append(contactMessages[nms.FromID], QueueMessage{
+			sent: nms.TimeStamp,
+			msg:  string(decryptedMessage),
+		})
+		username, err := g.lookupUsername(nms.FromID)
+		if err != nil {
+			log.Printf("error looking up username: %v", err)
+		}
+		if since > time.Second*5 {
+			g.appendText(fmt.Sprintf("%s %v:", username, since), string(decryptedMessage), nms.FromID)
+		} else {
+			g.appendText(username, string(decryptedMessage), nms.FromID)
+		}
+		if background {
+			fyne.CurrentApp().SendNotification(&fyne.Notification{
+				Title:   fmt.Sprintf("Msg from: %s", username),
+				Content: fmt.Sprintf("%s", string(decryptedMessage)),
+			})
+		}
+	}
+}
+
 func main() {
 	contactMessages = make(map[string][]QueueMessage)
 	c := Config{}
@@ -190,40 +214,7 @@ func main() {
 	g.window = g.app.NewWindow("Login")
 	platformDo(g)
 	g.loginWindow()
-	go func() {
-		for {
-			nm := <-g.client.MessageChan
-			nms := Msg{}
-			if err := json.Unmarshal(nm, &nms); err != nil {
-				log.Printf("error unmarshalling message: %v", err)
-			}
-			decryptedMessage, err := g.enc.privateDecrypt(nms.Message)
-			if err != nil {
-				log.Printf("error decrypting message: %v", err)
-			}
-			since := time.Now().Sub(nms.TimeStamp).Round(time.Second)
-			contactMessages[nms.FromID] = append(contactMessages[nms.FromID], QueueMessage{
-				sent: nms.TimeStamp,
-				msg:  string(decryptedMessage),
-			})
-			username, err := g.lookupUsername(nms.FromID)
-			if err != nil {
-				log.Printf("error looking up username: %v", err)
-			}
-			if since > time.Second*5 {
-				g.appendText(fmt.Sprintf("%s %v:", username, since), string(decryptedMessage), nms.FromID)
-			} else {
-				g.appendText(username, string(decryptedMessage), nms.FromID)
-			}
-			if background {
-				
-				fyne.CurrentApp().SendNotification(&fyne.Notification{
-					Title:   fmt.Sprintf("Msg from: %s", username),
-					Content: fmt.Sprintf("%s", string(decryptedMessage)),
-				})
-			}
-		}
-	}()
+	go g.listen()
 	g.lifecycle()
 	g.window.ShowAndRun()
 }

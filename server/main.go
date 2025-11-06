@@ -2,13 +2,18 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
-
+	"time"
+	
 	"github.com/gorilla/websocket"
 )
+
+// TODO : only allow user ID's that are in the config file
+// TODO : server_config.json
 
 type Server struct {
 	endpoint     string
@@ -33,9 +38,7 @@ func (s *Server) oc() func(r *http.Request) bool {
 
 func (s *Server) start() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if _, err := w.Write([]byte("404")); err != nil {
-			log.Printf("error writing response: %v\n", err)
-		}
+		http.Redirect(w, r, "https://youtu.be/dQw4w9WgXcQ", http.StatusMovedPermanently) // ROFL
 	})
 	http.HandleFunc(fmt.Sprintf("/%s", s.endpoint), func(w http.ResponseWriter, r *http.Request) {
 		var currentUserID string
@@ -45,6 +48,23 @@ func (s *Server) start() {
 			log.Println("upgrade to websocket conn:", err)
 			return
 		}
+		websocketTimeout := time.Now()
+		c.SetPingHandler(func(m string) error {
+			websocketTimeout = time.Now()
+			if err := c.WriteMessage(websocket.PongMessage, []byte("pong")); err != nil {
+				return errors.New("websocket pong: " + err.Error())
+			}
+			return nil
+		})
+		go func() {
+			for {
+				if time.Now().Sub(websocketTimeout) > time.Second*3 {
+					log.Printf("removing websocket session for %s\n", currentUserID)
+					delete(s.websockets, currentUserID)
+					return
+				}
+			}
+		}()
 		pmt, pm, err := c.ReadMessage()
 		if err != nil {
 			log.Printf("Error reading init message: %v\n", err)
@@ -62,6 +82,10 @@ func (s *Server) start() {
 			}
 			currentUserID = prs.ID
 			s.websockets[prs.ID] = c
+			log.Printf("User  %s Connected from %s\n", prs.ID, r.RemoteAddr)
+		} else {
+			log.Printf("Error parsing init message: %v\n", string(pm))
+			return
 		}
 		if val, ok := s.messageQueue[currentUserID]; ok {
 			for i := 0; i < len(val); i++ {
@@ -76,6 +100,7 @@ func (s *Server) start() {
 			messageType, message, err := c.ReadMessage()
 			if err != nil {
 				log.Printf("Error reading message: %v\n", err)
+				log.Printf("removing websocket session for %s\n", currentUserID)
 				delete(s.websockets, currentUserID)
 				return
 			}
@@ -94,6 +119,9 @@ func (s *Server) start() {
 				} else {
 					s.messageQueue[mt.ID] = append(s.messageQueue[mt.ID], message)
 				}
+			default:
+				fmt.Printf("Unused message type: %v\n", messageType)
+				continue
 			}
 		}
 	})

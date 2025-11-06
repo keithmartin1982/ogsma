@@ -6,23 +6,22 @@ import (
 	"fmt"
 	"log"
 	"time"
-
+	
 	"github.com/gorilla/websocket"
 )
 
 type Client struct {
-	ID       string
-	targetID string
-	Conn     *websocket.Conn
-	// SelfSigned Disables checking CA store for cert
+	ID          string
+	targetID    string
+	Conn        *websocket.Conn
 	Addr        string
-	SelfSigned  bool
+	SelfSigned  bool // SelfSigned Disables checking CA store for cert
 	wsPath      string
 	MessageChan chan []byte
 }
 
 type Msg struct {
-	ID        string    `json:"id"` // id of target user
+	ID        string    `json:"id"`
 	Message   []byte    `json:"msg"`
 	TimeStamp time.Time `json:"timestamp"`
 	FromID    string    `json:"from"`
@@ -34,7 +33,7 @@ func (c *Client) Connect() error {
 	dd.TLSClientConfig = &tls.Config{
 		InsecureSkipVerify: c.SelfSigned,
 	}
-	dd.HandshakeTimeout = 10 * time.Second
+	dd.HandshakeTimeout = 5 * time.Second
 	c.Conn, _, err = dd.Dial(fmt.Sprintf("wss://%s/%s", c.Addr, c.wsPath), nil)
 	if err != nil {
 		return fmt.Errorf("dial: %v", err)
@@ -51,6 +50,8 @@ func (c *Client) Connect() error {
 	if err = c.Conn.WriteMessage(websocket.BinaryMessage, loginJson); err != nil {
 		return fmt.Errorf("write %v", err)
 	}
+	fmt.Println("connected")
+	c.KeepAlive()
 	return err
 }
 
@@ -59,11 +60,36 @@ func (c *Client) listener() {
 		for {
 			mt, message, err := c.Conn.ReadMessage()
 			if err != nil {
-				return
+				log.Printf("failed to read: %v", err)
+				break
 			}
 			switch mt {
 			case websocket.TextMessage:
 				c.MessageChan <- message
+			}
+		}
+		fmt.Println("exited connection listener")
+	}()
+	
+}
+
+func (c *Client) KeepAlive() () {
+	go func() {
+		for {
+			time.Sleep(1 * time.Second)
+			if err := c.Conn.WriteMessage(websocket.PingMessage, []byte("ping")); err == nil {
+				continue
+			} else {
+				log.Printf("write ping: %v\n", err)
+				for {
+					if err := c.Connect(); err != nil {
+						log.Printf("failed to connect: %v\n", err)
+						time.Sleep(666 * time.Millisecond) // lol
+						continue
+					}
+					break
+				}
+				return
 			}
 		}
 	}()

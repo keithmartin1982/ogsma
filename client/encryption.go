@@ -9,8 +9,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"log"
 	
 	_ "embed"
 	
@@ -47,43 +45,43 @@ type Contact struct {
 
 type Encryption struct {
 	configKeystore []byte
-	password string
-	iter     int
-	keys     *Keys
+	password       string
+	iter           int
+	keys           *Keys
 }
 
 func (e *Encryption) passwordDecrypt(cipherText []byte) ([]byte, error) {
 	if !bytes.ContainsAny(cipherText, "-") {
-		return nil, fmt.Errorf("invalid data")
+		return nil, errors.New("invalid data")
 	}
 	data := bytes.Split(cipherText, []byte("-"))
 	salt := make([]byte, hex.DecodedLen(len(data[0])))
 	if _, err := hex.Decode(salt, data[0]); err != nil {
-		return nil, fmt.Errorf("invalid data: salt")
+		return nil, errors.New("invalid data: salt" + err.Error())
 	}
 	iv := make([]byte, hex.DecodedLen(len(data[1])))
 	if _, err := hex.Decode(iv, data[1]); err != nil {
-		return nil, fmt.Errorf("invalid data: iv")
+		return nil, errors.New("invalid data: iv" + err.Error())
 	}
 	ciphertext := make([]byte, hex.DecodedLen(len(data[2])))
 	if _, err := hex.Decode(ciphertext, data[2]); err != nil {
-		return nil, fmt.Errorf("invalid data: ciphertext")
+		return nil, errors.New("invalid data: ciphertext" + err.Error())
 	}
 	key, err := pbkdf2.Key(sha256.New, e.password, salt, e.iter, 32)
 	if err != nil {
-		return nil, fmt.Errorf("error generating pbkdf2 key: %v", err)
+		return nil, errors.New("error generating pbkdf2 key:" + err.Error())
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, fmt.Errorf("decrypt failed: %v", err)
+		return nil, errors.New("decrypt failed:" + err.Error())
 	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("decrypt failed: %v", err)
+		return nil, errors.New("decrypt failed:" + err.Error())
 	}
 	plaintext, err := gcm.Open(nil, iv, ciphertext, nil)
 	if err != nil {
-		return nil, fmt.Errorf("decrypt failed: %v", err)
+		return nil, errors.New("decrypt failed:" + err.Error())
 	}
 	return plaintext, nil
 }
@@ -96,7 +94,7 @@ func (e *Encryption) loadKeys() error {
 	e.password = ""
 	ks := &Keystore{}
 	if err := json.Unmarshal(keystoreFileBytes, ks); err != nil {
-		log.Printf("Error unmarshaling keystore: %v\n", err)
+		return errors.New("Error unmarshaling keystore:" + err.Error())
 	}
 	publicKeyFromBytes, err := ecies.NewPublicKeyFromBytes(ks.PublicKey)
 	if err != nil {
