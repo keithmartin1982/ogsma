@@ -8,12 +8,12 @@ Adding users requires redistribution of all executables.
 
 # Android 
 
-You can obtain the required Android NKD at [NDK](https://github.com/android/ndk/wiki/Unsupported-Downloads)
+You can obtain the required Android NDK at [github NDK repo](https://github.com/android/ndk/wiki/Unsupported-Downloads)
 
 NDK release required:
 * r21e
 
-SDK path
+NDK path
 
 ```shell
 $HOME/Android/android-ndk-r21e
