@@ -29,6 +29,7 @@ type Msg struct {
 
 func (c *Client) Connect() error {
 	var err error
+	c.Conn = nil
 	dd := websocket.DefaultDialer
 	dd.TLSClientConfig = &tls.Config{
 		InsecureSkipVerify: c.SelfSigned,
@@ -68,7 +69,6 @@ func (c *Client) listener() {
 				c.MessageChan <- message
 			}
 		}
-		fmt.Println("exited connection listener")
 	}()
 	
 }
@@ -80,11 +80,10 @@ func (c *Client) KeepAlive() () {
 			if err := c.Conn.WriteMessage(websocket.PingMessage, []byte("ping")); err == nil {
 				continue
 			} else {
-				log.Printf("write ping: %v\n", err)
 				for {
 					if err := c.Connect(); err != nil {
 						log.Printf("failed to connect: %v\n", err)
-						time.Sleep(666 * time.Millisecond) // lol
+						time.Sleep(3 * time.Second)
 						continue
 					}
 					break

@@ -63,7 +63,7 @@ func (g *GUI) loginWindow() {
 	passEntry.OnSubmitted = func(s string) {
 		login()
 	}
-	// passEntry.SetText("password1234!") // set password
+	passEntry.SetText("password1234!") // set password
 	loginButton := widget.NewButton("Login", login)
 	content := container.NewVBox(
 		widget.NewLabel("Please log in"),
@@ -136,8 +136,13 @@ func (g *GUI) appendText(prefix, content any, id string) {
 }
 
 func (g *GUI) lifecycle() {
-	// App battery usage unrestricted is required for background websocket connection
 	lifecycle := g.app.Lifecycle()
+	lifecycle.SetOnStopped(func() {
+		background = true
+	})
+	lifecycle.SetOnStarted(func() {
+		background = false
+	})
 	lifecycle.SetOnExitedForeground(func() {
 		background = true
 	})
@@ -176,16 +181,16 @@ func (g *GUI) listen() {
 		if err != nil {
 			log.Printf("error looking up username: %v", err)
 		}
-		if since > time.Second*5 {
-			g.appendText(fmt.Sprintf("%s %v:", username, since), string(decryptedMessage), nms.FromID)
-		} else {
-			g.appendText(username, string(decryptedMessage), nms.FromID)
-		}
 		if background {
 			fyne.CurrentApp().SendNotification(&fyne.Notification{
 				Title:   fmt.Sprintf("Msg from: %s", username),
 				Content: fmt.Sprintf("%s", string(decryptedMessage)),
 			})
+		}
+		if since > time.Second*5 {
+			g.appendText(fmt.Sprintf("%s %v:", username, since), string(decryptedMessage), nms.FromID)
+		} else {
+			g.appendText(username, string(decryptedMessage), nms.FromID)
 		}
 	}
 }
