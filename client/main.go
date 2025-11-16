@@ -63,7 +63,7 @@ func (g *GUI) loginWindow() {
 	passEntry.OnSubmitted = func(s string) {
 		login()
 	}
-	passEntry.SetText("password1234!") // set password
+	// passEntry.SetText("password1234!") // set password
 	loginButton := widget.NewButton("Login", login)
 	content := container.NewVBox(
 		widget.NewLabel("Please log in"),
