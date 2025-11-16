@@ -1,19 +1,31 @@
 package main
 
 import (
+	_ "embed"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"slices"
 	"time"
-	
+
 	"github.com/gorilla/websocket"
 )
 
-// TODO : only allow user ID's that are in the config file
-// TODO : server_config.json
+var (
+	//go:embed config.json
+	configFile []byte
+)
+
+type Config struct {
+	Port     int      `json:"port"`
+	Endpoint string   `json:"endpoint"`
+	CertFile string   `json:"certFile"`
+	KeyFile  string   `json:"keyFile"`
+	Users    []string `json:"users"`
+}
 
 type Server struct {
 	endpoint     string
@@ -23,6 +35,7 @@ type Server struct {
 	cert         string
 	key          string
 	upgrader     websocket.Upgrader
+	users        []string
 }
 
 type MessageTemplate struct {
@@ -38,7 +51,17 @@ func (s *Server) oc() func(r *http.Request) bool {
 
 func (s *Server) start() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Printf("%s %s %s\n", r.RemoteAddr, r.Method, r.URL)
+		pll := r.ContentLength
+		if pll > 0 {
+			bytes, err := io.ReadAll(r.Body)
+			if err != nil {
+				log.Fatal(err)
+			}
+			fmt.Printf("Payload: %s\n", string(bytes))
+		}
 		http.Redirect(w, r, "https://youtu.be/dQw4w9WgXcQ", http.StatusMovedPermanently) // ROFL
+		return
 	})
 	http.HandleFunc(fmt.Sprintf("/%s", s.endpoint), func(w http.ResponseWriter, r *http.Request) {
 		var currentUserID string
@@ -48,6 +71,34 @@ func (s *Server) start() {
 			log.Println("upgrade to websocket conn:", err)
 			return
 		}
+		pmt, pm, err := c.ReadMessage()
+		if err != nil {
+			log.Printf("Error reading init message: %v\n", err)
+			return
+		}
+		if pmt == websocket.BinaryMessage {
+			prs := struct {
+				ID string `json:"id"`
+			}{}
+			if err := json.Unmarshal(pm, &prs); err != nil {
+				log.Printf("Error parsing init message: %v\n", err)
+			}
+			if len(prs.ID) != 64 {
+				return
+			}
+			// TODO : check if id is in s.users
+			if !slices.Contains(s.users, prs.ID) {
+				log.Printf("User %s not found in USERS\n", prs.ID)
+				return
+			}
+			currentUserID = prs.ID
+			s.websockets[prs.ID] = c
+			log.Printf("User  %s Connected from %s\n", prs.ID, r.RemoteAddr)
+		} else {
+			log.Printf("Error parsing init message: %v\n", string(pm))
+			return
+		}
+
 		websocketTimeout := time.Now()
 		c.SetPingHandler(func(m string) error {
 			websocketTimeout = time.Now()
@@ -65,28 +116,6 @@ func (s *Server) start() {
 				}
 			}
 		}()
-		pmt, pm, err := c.ReadMessage()
-		if err != nil {
-			log.Printf("Error reading init message: %v\n", err)
-			return
-		}
-		if pmt == websocket.BinaryMessage {
-			prs := struct {
-				ID string `json:"id"`
-			}{}
-			if err := json.Unmarshal(pm, &prs); err != nil {
-				log.Printf("Error parsing init message: %v\n", err)
-			}
-			if len(prs.ID) != 64 {
-				return
-			}
-			currentUserID = prs.ID
-			s.websockets[prs.ID] = c
-			log.Printf("User  %s Connected from %s\n", prs.ID, r.RemoteAddr)
-		} else {
-			log.Printf("Error parsing init message: %v\n", string(pm))
-			return
-		}
 		if val, ok := s.messageQueue[currentUserID]; ok {
 			for i := 0; i < len(val); i++ {
 				if err := s.websockets[currentUserID].WriteMessage(websocket.TextMessage, val[i]); err != nil {
@@ -131,13 +160,18 @@ func (s *Server) start() {
 }
 
 func main() {
-	s := &Server{}
+	c := &Config{}
+	if err := json.Unmarshal(configFile, c); err != nil {
+		log.Fatalf("Error parsing config file: %v\n", err)
+	}
+	s := &Server{
+		endpoint: c.Endpoint,
+		tlsPort:  c.Port,
+		cert:     c.CertFile,
+		key:      c.KeyFile,
+		users:    c.Users,
+	}
 	s.websockets = make(map[string]*websocket.Conn)
 	s.messageQueue = make(map[string][][]byte)
-	flag.StringVar(&s.endpoint, "endpoint", "ws", "websocket endpoint")
-	flag.StringVar(&s.cert, "cert", "server.crt", "tls cert file")
-	flag.StringVar(&s.key, "key", "server.key", "tls key file")
-	flag.IntVar(&s.tlsPort, "port", 8443, "https port")
-	flag.Parse()
 	s.start()
 }
