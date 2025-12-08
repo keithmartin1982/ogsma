@@ -1,18 +1,13 @@
 package main
 
 import (
+	_ "embed"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"log"
 	"time"
-	
-	_ "embed"
-	
-	"fyne.io/fyne/v2"
+
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -34,167 +29,6 @@ type Config struct {
 	Endpoint string `json:"endpoint"`
 }
 
-type GUI struct {
-	app             fyne.App
-	window          fyne.Window
-	chatOutput      map[string]*widget.RichText
-	scrollContainer map[string]*container.Scroll
-	client          *Client
-	enc             *Encryption
-}
-
-func (g *GUI) loginWindow() {
-	g.window.SetTitle("websocket-chat-gui")
-	messageLabel := widget.NewLabel("")
-	passEntry := widget.NewPasswordEntry()
-	passEntry.SetPlaceHolder("Password")
-	login := func() {
-		g.enc.password = passEntry.Text
-		if err := g.enc.loadKeys(); err != nil {
-			messageLabel.SetText(fmt.Sprintf("Invalid Password: %v", err))
-			return
-		}
-		g.client.ID = g.enc.keys.ID
-		if err := g.client.Connect(); err != nil {
-			log.Fatal(err)
-		}
-		g.contactsWindow()
-	}
-	passEntry.OnSubmitted = func(s string) {
-		login()
-	}
-	// passEntry.SetText("password1234!") // set password
-	loginButton := widget.NewButton("Login", login)
-	content := container.NewVBox(
-		widget.NewLabel("Please log in"),
-		passEntry,
-		loginButton,
-		messageLabel,
-	)
-	g.window.SetContent(content)
-}
-
-func (g *GUI) contactsWindow() {
-	g.window.SetTitle("Contacts")
-	tabs := container.NewAppTabs()
-	for _, contact := range g.enc.keys.Contacts {
-		tabs.Append(container.NewTabItem(contact.Username, g.chatWindow(contact)))
-	}
-	g.window.SetContent(tabs)
-}
-
-func (g *GUI) chatWindow(contact *Contact) *fyne.Container {
-	g.window.SetTitle("messaging")
-	g.chatOutput[contact.ID] = widget.NewRichText()
-	g.chatOutput[contact.ID].Wrapping = fyne.TextWrapWord
-	g.scrollContainer[contact.ID] = container.NewVScroll(g.chatOutput[contact.ID])
-	msgEntry := widget.NewEntry()
-	msgEntry.OnSubmitted = func(s string) {
-		if len(s) > 0 {
-			targetPublicKeyEncryptedBytes, err := g.enc.publicEncrypt([]byte(msgEntry.Text), contact.PublicKey)
-			if err != nil {
-				log.Println(err)
-				return
-			}
-			retry := 0
-			for {
-				retry++
-				if err := g.client.SendMsg(&Msg{
-					ID:        contact.ID,
-					TimeStamp: time.Now(),
-					Message:   targetPublicKeyEncryptedBytes,
-					FromID:    g.client.ID,
-				}); err == nil {
-					break
-				}
-				if retry > 16 {
-					log.Printf("Failed to send message to %v: %v", contact.ID, err)
-					g.appendText("ERROR:", "failed to send message", contact.ID)
-					return
-				}
-				time.Sleep(250 * time.Millisecond)
-			}
-			g.appendText(g.enc.keys.Username, msgEntry.Text, contact.ID)
-			msgEntry.SetText("")
-		}
-	}
-	return container.New(layout.NewBorderLayout(nil, msgEntry, nil, nil),
-		g.scrollContainer[contact.ID],
-		msgEntry,
-	)
-}
-
-func (g *GUI) appendText(prefix, content any, id string) {
-	go func() {
-		fyne.DoAndWait(func() {
-			g.chatOutput[id].AppendMarkdown(fmt.Sprintf("%v: %v", prefix, content))
-			g.chatOutput[id].AppendMarkdown("---")
-			g.scrollContainer[id].ScrollToBottom()
-			g.chatOutput[id].Refresh()
-		})
-	}()
-}
-
-func (g *GUI) lifecycle() {
-	lifecycle := g.app.Lifecycle()
-	lifecycle.SetOnStopped(func() {
-		background = true
-	})
-	lifecycle.SetOnStarted(func() {
-		background = false
-	})
-	lifecycle.SetOnExitedForeground(func() {
-		background = true
-	})
-	lifecycle.SetOnEnteredForeground(func() {
-		background = false
-	})
-}
-
-func (g *GUI) lookupUsername(id string) (string, error) {
-	for _, contact := range g.enc.keys.Contacts {
-		if id == contact.ID {
-			return contact.Username, nil
-			
-		}
-	}
-	return "", errors.New("user not found")
-}
-
-func (g *GUI) listen() {
-	for {
-		nm := <-g.client.MessageChan
-		nms := Msg{}
-		if err := json.Unmarshal(nm, &nms); err != nil {
-			log.Printf("error unmarshalling message: %v", err)
-		}
-		decryptedMessage, err := g.enc.privateDecrypt(nms.Message)
-		if err != nil {
-			log.Printf("error decrypting message: %v", err)
-		}
-		since := time.Now().Sub(nms.TimeStamp).Round(time.Second)
-		contactMessages[nms.FromID] = append(contactMessages[nms.FromID], QueueMessage{
-			sent: nms.TimeStamp,
-			msg:  string(decryptedMessage),
-		})
-		username, err := g.lookupUsername(nms.FromID)
-		if err != nil {
-			log.Printf("error looking up username: %v", err)
-		}
-		if background {
-			fyne.CurrentApp().SendNotification(&fyne.Notification{
-				Title:   fmt.Sprintf("Msg from: %s", username),
-				Content: fmt.Sprintf("%s", string(decryptedMessage)),
-			})
-		}
-		if since > time.Second*5 {
-			g.appendText(fmt.Sprintf("%s %v:", username, since), string(decryptedMessage), nms.FromID)
-		} else {
-			g.appendText(username, string(decryptedMessage), nms.FromID)
-		}
-	}
-}
-
 func main() {
 	contactMessages = make(map[string][]QueueMessage)
 	c := Config{}
@@ -214,9 +48,11 @@ func main() {
 			wsPath:      c.Endpoint,
 			MessageChan: make(chan []byte),
 		},
-		app: app.New(),
+		app:  app.New(),
+		tabs: false,
 	}
 	g.window = g.app.NewWindow("Login")
+	g.window.SetMaster()
 	platformDo(g)
 	g.loginWindow()
 	go g.listen()

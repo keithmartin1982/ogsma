@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 	"time"
-	
+
 	"github.com/gorilla/websocket"
 )
 
@@ -70,10 +70,10 @@ func (c *Client) listener() {
 			}
 		}
 	}()
-	
+
 }
 
-func (c *Client) KeepAlive() () {
+func (c *Client) KeepAlive() {
 	go func() {
 		for {
 			time.Sleep(1 * time.Second)
@@ -83,7 +83,7 @@ func (c *Client) KeepAlive() () {
 				for {
 					if err := c.Connect(); err != nil {
 						log.Printf("failed to connect: %v\n", err)
-						time.Sleep(3 * time.Second)
+						time.Sleep(5 * time.Second)
 						continue
 					}
 					break
